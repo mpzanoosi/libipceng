@@ -5,15 +5,14 @@
 #define free_safe(ptr) do{ free(ptr); (ptr)=NULL; } while(0)
 #endif
 
-
 // internal helper functions
-static int _read_proc_oneline_file(char *file_name, char **buff)
+static int _read_procfile_oneline(char *file_name, char **buff)
 {
 	if (!file_name || !buff)
 		return -1;
 
 	*buff = NULL;
-	FILE* fp = fopen(file_name, "r");
+	FILE *fp = fopen(file_name, "r");
 	if (fp == NULL)
 		return -1;
 
@@ -134,7 +133,8 @@ int ipceng_qdoor_add(struct ipceng *obj,
 	struct qdoor *iter;
 	list_for_each_entry(iter, &obj->qdoor_list, _list) {
 		if (!strcmp(iter->name, qdoor_name)) {
-			ipceng_set_error(obj, IPCENG_ERR_QDOORADD, "failed to add qdoor: qdoor has been added already");
+			ipceng_set_error(obj, IPCENG_ERR_QDOORADD, \
+				"failed to add qdoor: qdoor has been added already");
 			return -1;
 		}
 	}
@@ -144,7 +144,7 @@ int ipceng_qdoor_add(struct ipceng *obj,
 	char *buff;
 
 	// check if target_msgmaxcount is greater than linux setting (/proc)
-	if (_read_proc_oneline_file("/proc/sys/fs/mqueue/msg_max", &buff) != 0) {
+	if (_read_procfile_oneline("/proc/sys/fs/mqueue/msg_max", &buff) != 0) {
 		ipceng_set_error(obj, IPCENG_ERR_QDOORADD, \
 			"failed to add qdoor: can't read /proc/sys/fs/mqueue/msg_max");
 		return -1;
@@ -158,7 +158,7 @@ int ipceng_qdoor_add(struct ipceng *obj,
 	free_safe(buff);
 
 	// check if target_msgmaxsize is greater than linux setting (/proc)
-	if (_read_proc_oneline_file("/proc/sys/fs/mqueue/msgsize_max", &buff) != 0) {
+	if (_read_procfile_oneline("/proc/sys/fs/mqueue/msgsize_max", &buff) != 0) {
 		ipceng_set_error(obj, IPCENG_ERR_QDOORADD, \
 			"failed to add qdoor: can't read /proc/sys/fs/mqueue/msgsize_max");
 		return -1;
@@ -180,12 +180,14 @@ int ipceng_qdoor_add(struct ipceng *obj,
 	new_qdoor->sendq.name = (char *)malloc(mqnames_len);
 	sprintf(new_qdoor->sendq.name, "/%s2%s.mq", obj->name, qdoor_name);
 	new_qdoor->sendq.timeout = timeout_send;
-	new_qdoor->sendq.oflags = (timeout_send > 0) ? (O_CREAT | O_WRONLY) : (O_CREAT | O_WRONLY | O_NONBLOCK);
+	new_qdoor->sendq.oflags = (timeout_send > 0) ? (O_CREAT | O_WRONLY) : \
+		(O_CREAT | O_WRONLY | O_NONBLOCK);
 	new_qdoor->sendq.attr.mq_flags = 0;
 	new_qdoor->sendq.attr.mq_maxmsg = target_msgmaxcount;
 	new_qdoor->sendq.attr.mq_msgsize = target_msgmaxsize;
 	new_qdoor->sendq.attr.mq_curmsgs = 0;
-	new_qdoor->sendq.mqd = mq_open(new_qdoor->sendq.name, new_qdoor->sendq.oflags, 0664, &new_qdoor->sendq.attr);
+	new_qdoor->sendq.mqd = mq_open(new_qdoor->sendq.name, new_qdoor->sendq.oflags, \
+		0664, &new_qdoor->sendq.attr);
 	if (new_qdoor->sendq.mqd == (mqd_t)-1) {
 		ipceng_set_error(obj, IPCENG_ERR_QDOORADD, \
 			"failed to add qdoor: unable to open sending mq");
@@ -197,15 +199,18 @@ int ipceng_qdoor_add(struct ipceng *obj,
 	new_qdoor->recvq.name = (char *)malloc(mqnames_len);
 	sprintf(new_qdoor->recvq.name, "/%s2%s.mq", qdoor_name, obj->name);
 	new_qdoor->recvq.timeout = timeout_recv;
-	new_qdoor->recvq.oflags = (timeout_recv > 0) ? (O_CREAT | O_RDONLY) : (O_CREAT | O_RDONLY | O_NONBLOCK);
+	new_qdoor->recvq.oflags = (timeout_recv > 0) ? (O_CREAT | O_RDONLY) : \
+		(O_CREAT | O_RDONLY | O_NONBLOCK);
 	new_qdoor->recvq.attr.mq_flags = 0;
 	new_qdoor->recvq.attr.mq_maxmsg = target_msgmaxcount;
 	new_qdoor->recvq.attr.mq_msgsize = target_msgmaxsize;
 	new_qdoor->recvq.attr.mq_curmsgs = 0;
-	new_qdoor->recvq.mqd = mq_open(new_qdoor->recvq.name, new_qdoor->recvq.oflags, 0664, &new_qdoor->recvq.attr);
+	new_qdoor->recvq.mqd = mq_open(new_qdoor->recvq.name, new_qdoor->recvq.oflags, \
+		0664, &new_qdoor->recvq.attr);
 	if (new_qdoor->recvq.mqd == (mqd_t)-1) {
 		ipceng_set_error(obj, IPCENG_ERR_QDOORADD, \
 			"failed to add qdoor: unable to open receiving mq");
+		// if can't open recvq, then should remove sendq as well
 		mq_unlink(new_qdoor->sendq.name);
 		free_safe(new_qdoor->sendq.name);
 		free_safe(new_qdoor->recvq.name);
@@ -265,7 +270,8 @@ int ipceng_qdoor_open(struct ipceng *obj, char *qdoor_name)
 	list_for_each_entry(iter, &obj->qdoor_list, _list) {
 		if (!strcmp(iter->name, qdoor_name)) {
 			if (iter->sendq.state != MQ_OPENED) {
-				iter->sendq.mqd = mq_open(iter->sendq.name, iter->sendq.oflags, 0664, &iter->sendq.attr);
+				iter->sendq.mqd = mq_open(iter->sendq.name, iter->sendq.oflags, \
+					0664, &iter->sendq.attr);
 				if (iter->sendq.mqd == (mqd_t)-1) {
 					ipceng_set_error(obj, IPCENG_ERR_QDOOROPEN, \
 						"failed to open qdoor: unable to open sending mq");
@@ -274,10 +280,12 @@ int ipceng_qdoor_open(struct ipceng *obj, char *qdoor_name)
 				iter->sendq.state = MQ_OPENED;
 			}
 			if (iter->recvq.state != MQ_OPENED) {
-				iter->recvq.mqd = mq_open(iter->recvq.name, iter->recvq.oflags, 0664, &iter->recvq.attr);
+				iter->recvq.mqd = mq_open(iter->recvq.name, iter->recvq.oflags, \
+					0664, &iter->recvq.attr);
 				if (iter->recvq.mqd == (mqd_t)-1) {
 					ipceng_set_error(obj, IPCENG_ERR_QDOOROPEN, \
 						"failed to open qdoor: unable to open receiving mq");
+					// should close sendq if recvq opening is failed as well
 					mq_close(iter->sendq.mqd);
 					iter->sendq.state = MQ_CLOSED;
 					return -1;
@@ -335,7 +343,8 @@ int ipceng_qdoor_push(struct ipceng *obj, char *qdoor_name, char *msg, int prio)
 {
 	// check for prio range
 	if (!(prio >= IPCENG_PRIO_MIN && prio <= IPCENG_PRIO_MAX)) {
-		ipceng_set_error(obj, IPCENG_ERR_QDOORPUSH, "failed to push into qdoor: out of range priority");
+		ipceng_set_error(obj, IPCENG_ERR_QDOORPUSH, \
+			"failed to push into qdoor: out of range priority");
 		return -1;
 	}
 
@@ -382,7 +391,7 @@ int ipceng_qdoor_pop(struct ipceng *obj, char *qdoor_name, char **buff, int *pri
 				clock_gettime(CLOCK_REALTIME, &tm);
 				tm.tv_sec += iter->recvq.timeout;
 				*buff = (char *)calloc(iter->recvq.attr.mq_msgsize, 1);
-				if (mq_timedreceive(iter->recvq.mqd, *buff, iter->recvq.attr.mq_msgsize, prio, &tm) > 0) {
+				if (mq_timedreceive(iter->recvq.mqd, *buff, iter->recvq.attr.mq_msgsize, prio, &tm) >= 0) {
 					ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
 					return 0;
 				} else {
@@ -393,7 +402,7 @@ int ipceng_qdoor_pop(struct ipceng *obj, char *qdoor_name, char **buff, int *pri
 			} else {
 				// receiving message without timeout
 				*buff = (char *)calloc(iter->recvq.attr.mq_msgsize, 1);
-				if (mq_receive(iter->recvq.mqd, *buff, iter->recvq.attr.mq_msgsize, prio) == 0) {
+				if (mq_receive(iter->recvq.mqd, *buff, iter->recvq.attr.mq_msgsize, prio) >= 0) {
 					ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
 					return 0;
 				} else {
