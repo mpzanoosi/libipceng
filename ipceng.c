@@ -29,10 +29,10 @@ static int _read_procfile_oneline(char *file_name, char **buff)
 }
 
 // internal structures/enums
-enum mqstate
+enum ipcstate
 {
-	MQ_OPENED,
-	MQ_CLOSED
+	IPC_ENTITY_OPENED,
+	IPC_ENTITY_CLOSED
 };
 
 struct mqwrap
@@ -42,7 +42,7 @@ struct mqwrap
 	int oflags;
 	struct mq_attr attr;
 	mqd_t mqd;
-	enum mqstate state;
+	enum ipcstate state;
 };
 
 struct qdoor
@@ -52,6 +52,18 @@ struct qdoor
 	struct mqwrap sendq;
 	struct mqwrap recvq;
 	// internal qdoor linked list member
+	struct list_head _list;
+};
+
+struct shm
+{
+	char *name;
+	int shmd;
+	int oflag;
+	mode_t mode;
+	size_t size;
+	enum ipcstate state;
+	// internal shm linked list member
 	struct list_head _list;
 };
 
@@ -68,6 +80,8 @@ struct ipceng *ipceng_init(char *name)
 	new_obj->err_msg = strdup("no error");
 	INIT_LIST_HEAD(&new_obj->qdoor_list);
 	new_obj->qdoor_count = 0;
+	INIT_LIST_HEAD(&new_obj->shm_list);
+	new_obj->shm_count = 0;
 	INIT_LIST_HEAD(&new_obj->_list);
 
 	return new_obj;
@@ -83,7 +97,8 @@ void ipceng_set_error(struct ipceng *obj, int _errno, char *_errmsg)
 int ipceng_term(struct ipceng *obj)
 {
 	if (ipceng_qdoor_close_all(obj) != 0) {
-		ipceng_set_error(obj, IPCENG_ERR_TERM, "terminating ipceng object failed: terminating qdoors failed");
+		ipceng_set_error(obj, IPCENG_ERR_TERM, \
+			"terminating ipceng object failed: terminating qdoors failed");
 		return -1;
 	}
 	free_safe(obj->name);
@@ -125,10 +140,6 @@ int ipceng_qdoor_add(struct ipceng *obj,
 	int timeout_send,
 	int timeout_recv)
 {
-	if (!qdoor_name) {
-		ipceng_set_error(obj, IPCENG_ERR_QDOORADD, "failed to add qdoor: qdoor_name is NULL");
-		return -1;
-	}
 	// qdoor should not be added before
 	struct qdoor *iter;
 	list_for_each_entry(iter, &obj->qdoor_list, _list) {
@@ -217,8 +228,8 @@ int ipceng_qdoor_add(struct ipceng *obj,
 		free_safe(new_qdoor);
 		return -1;
 	}
-	new_qdoor->sendq.state = MQ_OPENED;
-	new_qdoor->recvq.state = MQ_OPENED;
+	new_qdoor->sendq.state = IPC_ENTITY_OPENED;
+	new_qdoor->recvq.state = IPC_ENTITY_OPENED;
 	// adding new_qdoor into obj
 	list_add_tail(&new_qdoor->_list, &obj->qdoor_list);
 	obj->qdoor_count++;
@@ -244,6 +255,7 @@ int ipceng_qdoor_del(struct ipceng *obj, char *qdoor_name)
 	list_for_each_entry_safe(iter, iter_n, &obj->qdoor_list, _list) {
 		if (!strcmp(iter->name, qdoor_name)) {
 			_ipceng_qdoor_del_by_entry(iter);
+			obj->qdoor_count--;
 			ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
 			return 0;
 		}
@@ -258,6 +270,7 @@ int ipceng_qdoor_del_all(struct ipceng *obj)
 	struct qdoor *iter, *iter_n;
 	list_for_each_entry_safe(iter, iter_n, &obj->qdoor_list, _list) {
 		_ipceng_qdoor_del_by_entry(iter);
+		obj->qdoor_count--;
 	}
 	
 	ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
@@ -269,7 +282,7 @@ int ipceng_qdoor_open(struct ipceng *obj, char *qdoor_name)
 	struct qdoor *iter;
 	list_for_each_entry(iter, &obj->qdoor_list, _list) {
 		if (!strcmp(iter->name, qdoor_name)) {
-			if (iter->sendq.state != MQ_OPENED) {
+			if (iter->sendq.state != IPC_ENTITY_OPENED) {
 				iter->sendq.mqd = mq_open(iter->sendq.name, iter->sendq.oflags, \
 					0664, &iter->sendq.attr);
 				if (iter->sendq.mqd == (mqd_t)-1) {
@@ -277,9 +290,9 @@ int ipceng_qdoor_open(struct ipceng *obj, char *qdoor_name)
 						"failed to open qdoor: unable to open sending mq");
 					return -1;
 				}
-				iter->sendq.state = MQ_OPENED;
+				iter->sendq.state = IPC_ENTITY_OPENED;
 			}
-			if (iter->recvq.state != MQ_OPENED) {
+			if (iter->recvq.state != IPC_ENTITY_OPENED) {
 				iter->recvq.mqd = mq_open(iter->recvq.name, iter->recvq.oflags, \
 					0664, &iter->recvq.attr);
 				if (iter->recvq.mqd == (mqd_t)-1) {
@@ -287,10 +300,10 @@ int ipceng_qdoor_open(struct ipceng *obj, char *qdoor_name)
 						"failed to open qdoor: unable to open receiving mq");
 					// should close sendq if recvq opening is failed as well
 					mq_close(iter->sendq.mqd);
-					iter->sendq.state = MQ_CLOSED;
+					iter->sendq.state = IPC_ENTITY_CLOSED;
 					return -1;
 				}
-				iter->recvq.state = MQ_OPENED;
+				iter->recvq.state = IPC_ENTITY_OPENED;
 			}
 			ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
 			return 0;
@@ -303,13 +316,13 @@ int ipceng_qdoor_open(struct ipceng *obj, char *qdoor_name)
 
 void _ipceng_qdoor_close_by_entry(struct qdoor *qd)
 {
-	if (qd->sendq.state != MQ_CLOSED) {
+	if (qd->sendq.state != IPC_ENTITY_CLOSED) {
 		mq_close(qd->sendq.mqd);
-		qd->sendq.state = MQ_CLOSED;
+		qd->sendq.state = IPC_ENTITY_CLOSED;
 	}
-	if (qd->recvq.state != MQ_CLOSED) {
+	if (qd->recvq.state != IPC_ENTITY_CLOSED) {
 		mq_close(qd->recvq.mqd);
-		qd->recvq.state = MQ_CLOSED;
+		qd->recvq.state = IPC_ENTITY_CLOSED;
 	}
 }
 
@@ -416,4 +429,55 @@ int ipceng_qdoor_pop(struct ipceng *obj, char *qdoor_name, char **buff, int *pri
 
 	ipceng_set_error(obj, IPCENG_ERR_QDOORPOP, "failed to pop from qdoor: qdoor not found");
 	return -1;
+}
+
+int ipceng_get_qdoor_count(struct ipceng *obj)
+{
+	return obj->qdoor_count;
+}
+
+int ipceng_shm_add(struct ipceng *obj, char *shm_name, size_t size)
+{
+	// shm should not be added before
+	struct shm *iter;
+	list_for_each_entry(iter, &obj->shm_list, _list) {
+		if (!strcmp(iter->name, shm_name)) {
+			ipceng_set_error(obj, IPCENG_ERR_SHMADD, \
+				"failed to add shm: shm has been added already");
+			return -1;
+		}
+	}
+
+	int shmname_len = strlen("/_.shm") + strlen(obj->name) + strlen(shm_name) + 1;
+	// creating shm object
+	struct shm *new_shm = (struct shm *)malloc(sizeof(struct shm));
+	new_shm->name = (char *)malloc(shmname_len);
+	sprintf(new_shm->name, "/%s_%s.shm", obj->name, shm_name);
+	new_shm->oflag = O_CREAT | O_RDWR;
+	new_shm->mode = 0664;
+	new_shm->shmd = shm_open(new_shm->name, new_shm->oflag, new_shm->mode);
+	if (new_shm->shmd == -1) {
+		ipceng_set_error(obj, errno, strerror(errno));
+		return -1;
+	}
+	new_shm->size = size;
+	ftruncate(new_shm->shmd, new_shm->size);
+
+	ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
+	return 0;
+}
+
+int ipceng_shm_del(struct ipceng *obj, char *shm_name);
+
+int ipceng_shm_open(struct ipceng *obj, char *shm_name);
+
+int ipceng_shm_close(struct ipceng *obj, char *shm_name);
+
+int ipceng_shm_read(struct ipceng *obj, char *shm_name, char **buff, size_t addr, size_t size);
+
+int ipceng_shm_write(struct ipceng *obj, char *shm_name, char *data, size_t addr, size_t size);
+
+int ipceng_get_shm_count(struct ipceng *obj)
+{
+	return obj->shm_count;
 }

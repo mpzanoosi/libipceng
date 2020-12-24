@@ -19,7 +19,10 @@
 #define IPCENG_ERR_QDOOROPEN			-3
 #define IPCENG_ERR_QDOORPUSH			-4
 #define IPCENG_ERR_QDOORPOP				-5
-#define IPCENG_ERR_TERM					-6
+#define IPCENG_ERR_SHMADD				-6
+#define IPCENG_ERR_SHMDEL				-7
+#define IPCENG_ERR_SHMOPEN				-8
+#define IPCENG_ERR_TERM					-9
 
 // default values
 #define IPCENG_DAFAULT_MSGCOUNT		10
@@ -36,9 +39,12 @@ struct ipceng
 	bool has_logging;
 	int err_code;
 	char *err_msg;
-	// qdoor list
+	// qdoor list and count
 	struct list_head qdoor_list;
 	int qdoor_count;
+	// shared memory list and count
+	struct list_head shm_list;
+	int shm_count;
 	// internal ipceng linked list member; **this is not use by libipceng**
 	struct list_head _list;
 };
@@ -280,5 +286,102 @@ int ipceng_qdoor_pop(struct ipceng *obj, char *qdoor_name, char **buff, int *pri
  *             ipceng_errno())
  */
 #define ipceng_qdoor_recv_simple(obj, qdoor_name, buff) ipceng_qdoor_pop(obj, qdoor_name, buff, NULL)
+
+/**
+ * @brief      function to get current number of qdoors in the object; this is
+ *             equivalent to obj->qdoor_count
+ *
+ * @param      obj   ipc engine object
+ *
+ * @return     number of current qdoor_count
+ */
+int ipceng_get_qdoor_count(struct ipceng *obj);
+/**
+ * @brief      function to add and/or create a new shared memory; note that
+ *             'name' should not be added already
+ *
+ * @param      obj       ipc engine object
+ * @param      shm_name  target shared memory name
+ * @param[in]  size      target shared memory size
+ *
+ * @return     0 = succeeded, -1 = failed (check ipceng_errmsg() or
+ *             ipceng_errno())
+ */
+int ipceng_shm_add(struct ipceng *obj, char *shm_name, int size);
+
+/**
+ * @brief      function to delete a shared memory
+ *
+ * @param      obj       ipc engine object
+ * @param      shm_name  target shared memory name
+ *
+ * @return     0 = succeeded, -1 = failed (check ipceng_errmsg() or
+ *             ipceng_errno())
+ */
+int ipceng_shm_del(struct ipceng *obj, char *shm_name);
+
+/**
+ * @brief      function to open a shared memory
+ *
+ * @param      obj       ipc engine object
+ * @param      shm_name  target shared memory name
+ *
+ * @return     0 = succeeded, -1 = failed (check ipceng_errmsg() or
+ *             ipceng_errno())
+ */
+int ipceng_shm_open(struct ipceng *obj, char *shm_name);
+
+/**
+ * @brief      function to close a shared memory
+ *
+ * @param      obj       ipc engine object
+ * @param      shm_name  target shared memory name
+ *
+ * @return     0 = succeeded, -1 = failed (check ipceng_errmsg() or
+ *             ipceng_errno())
+ */
+int ipceng_shm_close(struct ipceng *obj, char *shm_name);
+
+/**
+ * @brief      function to read an address from shared memory; should free *buff
+ *             at the end
+ *
+ * @param      obj       ipc engine object
+ * @param      shm_name  target shared memory name
+ * @param      buff      buffer containing the data; should be freed after
+ *                       ending up with it
+ * @param[in]  addr      shm to-be-read address
+ * @param[in]  size      target size; it should not exceed shm page size
+ *                       (considering address offset also)
+ *
+ * @return     0 = succeeded, -1 = failed (check ipceng_errmsg() or
+ *             ipceng_errno())
+ */
+int ipceng_shm_read(struct ipceng *obj, char *shm_name, char **buff, size_t addr, size_t size);
+
+/**
+ * @brief      function to write a fragment into shared memory
+ *
+ * @param      obj       ipc engine object
+ * @param      shm_name  target shared memory name
+ * @param      data      target data for writing
+ * @param[in]  addr      target shm address for writing
+ * @param[in]  size      target data size; it should not exceed shm page size
+ *                       (considering address offset also)
+ *
+ * @return     0 = succeeded, -1 = failed (check ipceng_errmsg() or
+ *             ipceng_errno())
+ */
+int ipceng_shm_write(struct ipceng *obj, char *shm_name, char *data, size_t addr, size_t size);
+
+/**
+ * @brief      function to get current number of shms in the object; this is
+ *             equivalent to obj->shm_count
+ *
+ * @param      obj   ipc engine object
+ *
+ * @return     number of current shm_count
+ */
+int ipceng_get_shm_count(struct ipceng *obj);
 
 #endif // !IPCENG_H
