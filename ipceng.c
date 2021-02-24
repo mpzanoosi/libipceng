@@ -1,4 +1,9 @@
 #include "ipceng.h"
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <time.h>
 
 // macros
 #ifndef free_safe
@@ -63,6 +68,8 @@ struct shm
 	mode_t mode;
 	size_t size;
 	enum ipcstate state;
+	// internal pointer to hold output of mmap
+	void *ptr;
 	// internal shm linked list member
 	struct list_head _list;
 };
@@ -436,6 +443,7 @@ int ipceng_get_qdoor_count(struct ipceng *obj)
 	return obj->qdoor_count;
 }
 
+// functions of shared memory part
 int ipceng_shm_add(struct ipceng *obj, char *shm_name, size_t size)
 {
 	// shm should not be added before
@@ -458,24 +466,154 @@ int ipceng_shm_add(struct ipceng *obj, char *shm_name, size_t size)
 	new_shm->shmd = shm_open(new_shm->name, new_shm->oflag, new_shm->mode);
 	if (new_shm->shmd == -1) {
 		ipceng_set_error(obj, errno, strerror(errno));
+		free_safe(new_shm->name);
+		free_safe(new_shm);
 		return -1;
 	}
 	new_shm->size = size;
-	ftruncate(new_shm->shmd, new_shm->size);
+	if (ftruncate(new_shm->shmd, new_shm->size) != 0) {
+		ipceng_set_error(obj, errno, strerror(errno));
+		close(new_shm->shmd);
+		free_safe(new_shm->name);
+		free_safe(new_shm);
+		return -1;
+	}
+	new_shm->ptr = mmap(NULL, new_shm->size, PROT_READ | PROT_WRITE, \
+		MAP_SHARED, new_shm->shmd, 0);
+	if (new_shm->ptr == MAP_FAILED) {
+		ipceng_set_error(obj, errno, strerror(errno));
+		close(new_shm->shmd);
+		free_safe(new_shm->name);
+		free_safe(new_shm);
+		return -1;
+	}
+	new_shm->state = IPC_ENTITY_OPENED;
 
 	ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
 	return 0;
 }
 
-int ipceng_shm_del(struct ipceng *obj, char *shm_name);
+int ipceng_shm_del(struct ipceng *obj, char *shm_name)
+{
+	struct shm *iter, *iter_n;
+	list_for_each_entry_safe(iter, iter_n, &obj->shm_list, _list) {
+		if (!strcmp(iter->name, shm_name)) {
+			munmap(iter->ptr, iter->size);
+			close(iter->shmd);
+			free_safe(iter->name);
+			free_safe(iter);
+		}
+	}
 
-int ipceng_shm_open(struct ipceng *obj, char *shm_name);
+	ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
+	return 0;
+}
 
-int ipceng_shm_close(struct ipceng *obj, char *shm_name);
+int ipceng_shm_open(struct ipceng *obj, char *shm_name)
+{
+	struct shm *iter;
+	list_for_each_entry(iter, &obj->shm_list, _list) {
+		if (!strcmp(iter->name, shm_name)) {
+			if (iter->state != IPC_ENTITY_OPENED) {
+				iter->shmd = shm_open(iter->name, iter->oflag, iter->mode);
+				if (iter->shmd == -1) {
+					ipceng_set_error(obj, errno, strerror(errno));
+					return -1;
+				}
+				if (ftruncate(iter->shmd, iter->size) != 0) {
+					ipceng_set_error(obj, errno, strerror(errno));
+					close(iter->shmd);
+					return -1;
+				}
+				iter->ptr = mmap(NULL, iter->size, PROT_READ | PROT_WRITE, \
+					MAP_SHARED, iter->shmd, 0);
+				if (iter->ptr == MAP_FAILED) {
+					ipceng_set_error(obj, errno, strerror(errno));
+					close(iter->shmd);
+					return -1;
+				}
+				iter->state = IPC_ENTITY_OPENED;
+			}
+			ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
+			return 0;
+		}
+	}
 
-int ipceng_shm_read(struct ipceng *obj, char *shm_name, char **buff, size_t addr, size_t size);
+	ipceng_set_error(obj, IPCENG_ERR_SHMOPEN, "failed to open shm: no shm found");
+	return -1;
+}
 
-int ipceng_shm_write(struct ipceng *obj, char *shm_name, char *data, size_t addr, size_t size);
+int ipceng_shm_close(struct ipceng *obj, char *shm_name)
+{
+	struct shm *iter;
+	list_for_each_entry(iter, &obj->shm_list, _list) {
+		if (!strcmp(iter->name, shm_name)) {
+			if (iter->state != IPC_ENTITY_CLOSED) {
+				close(iter->shmd);
+				munmap(iter->ptr, iter->size);
+				iter->state = IPC_ENTITY_CLOSED;
+			}
+		}
+	}
+
+	ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
+	return 0;
+}
+
+int ipceng_shm_read(struct ipceng *obj, char *shm_name, char **buff, size_t addr, size_t size)
+{
+	struct shm *iter;
+	list_for_each_entry(iter, &obj->shm_list, _list) {
+		if (!strcmp(iter->name, shm_name)) {
+			if (iter->state != IPC_ENTITY_OPENED) {
+				ipceng_set_error(obj, IPCENG_ERR_SHMREAD, \
+					"failed to read from shm: shm is not opened");
+				return -1;
+			}
+			size_t last_offset = addr + size + 1;
+			if (last_offset > iter->size) {
+				ipceng_set_error(obj, IPCENG_ERR_SHMREAD, \
+					"failed to read from shm: (addr,size) pair is out of range");
+				return -1;
+			}
+			// now everything is ok, should read the bytes
+			*buff = (char *)malloc(size);
+			memcpy(*buff, iter->ptr + addr, size);
+			ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
+			return 0;
+		}
+	}
+
+	ipceng_set_error(obj, IPCENG_ERR_SHMREAD, "failed to read from shm: no shm found");
+	return -1;
+}
+
+int ipceng_shm_write(struct ipceng *obj, char *shm_name, char *data, size_t addr, size_t size)
+{
+	struct shm *iter;
+	list_for_each_entry(iter, &obj->shm_list, _list) {
+		if (!strcmp(iter->name, shm_name)) {
+			if (iter->state != IPC_ENTITY_OPENED) {
+				ipceng_set_error(obj, IPCENG_ERR_SHMWRITE, \
+					"failed to read from shm: shm is not opened");
+				return -1;
+			}
+			size_t last_offset = addr + size + 1;
+			if (last_offset > iter->size) {
+				ipceng_set_error(obj, IPCENG_ERR_SHMWRITE, \
+					"failed to read from shm: (addr,size) pair is out of range");
+				return -1;
+			}
+			// now everything is ok, should read the bytes
+			memcpy(iter->ptr + addr, data, size);
+			ipceng_set_error(obj, IPCENG_ERR_NOERROR, "no error");
+			return 0;
+		}
+	}
+
+	ipceng_set_error(obj, IPCENG_ERR_SHMWRITE, "failed to read from shm: no shm found");
+	return -1;
+}
 
 int ipceng_get_shm_count(struct ipceng *obj)
 {

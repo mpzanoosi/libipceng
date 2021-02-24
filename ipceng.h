@@ -4,12 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <errno.h>
 #include <mqueue.h>
-#include <time.h>
+#include <unistd.h>
+#include <sys/types.h>
 #include "list.h"
 
 // list of errors
@@ -22,7 +20,9 @@
 #define IPCENG_ERR_SHMADD				-6
 #define IPCENG_ERR_SHMDEL				-7
 #define IPCENG_ERR_SHMOPEN				-8
-#define IPCENG_ERR_TERM					-9
+#define IPCENG_ERR_SHMREAD				-9
+#define IPCENG_ERR_SHMWRITE				-10
+#define IPCENG_ERR_TERM					-11
 
 // default values
 #define IPCENG_DAFAULT_MSGCOUNT		10
@@ -307,7 +307,7 @@ int ipceng_get_qdoor_count(struct ipceng *obj);
  * @return     0 = succeeded, -1 = failed (check ipceng_errmsg() or
  *             ipceng_errno())
  */
-int ipceng_shm_add(struct ipceng *obj, char *shm_name, int size);
+int ipceng_shm_add(struct ipceng *obj, char *shm_name, size_t size);
 
 /**
  * @brief      function to delete a shared memory
