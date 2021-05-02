@@ -1,5 +1,5 @@
 # libipceng
-Library for Linux Inter-Process Communication (IPC): simultaneous; asynchronous; based on posix message queue and Linux \
+Library for Linux Inter-Process Communication (IPC): simultaneous; asynchronous; based on posix message queue and Linux 
 kernel doubly linked-list.
 
 simultaneous: two processes can send data to each other at the same time\
