@@ -1,6 +1,7 @@
 #ifndef IPCENG_H
 #define IPCENG_H
 
+// used headers
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -10,7 +11,7 @@
 #include <sys/types.h>
 #include "list.h"
 
-// list of errors
+// errors
 #define IPCENG_ERR_NOERROR				0
 #define IPCENG_ERR_QDOORADD				-1
 #define IPCENG_ERR_QDOORDEL				-2
@@ -36,7 +37,7 @@
 struct ipceng
 {
 	char *name;
-	bool has_logging;
+	bool has_log;
 	int err_code;
 	char *err_msg;
 	// qdoor list and count
@@ -45,7 +46,9 @@ struct ipceng
 	// shared memory list and count
 	struct list_head shm_list;
 	int shm_count;
-	// internal ipceng linked list member; **this is not use by libipceng**
+	// internal ipceng linked list member;
+	// **this is not use by libipceng**
+	// **this is used when you want to create linked-list of engines**
 	struct list_head _list;
 };
 
