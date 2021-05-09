@@ -1,7 +1,8 @@
 #include <stdio.h>
+#include <string.h>
 #include "ipceng.h"
 
-int test1()
+int qdoor_test1()
 {
 	struct ipceng *eng1 = ipceng_init("eng1");
 	
@@ -35,7 +36,7 @@ int test1()
 	return 0;
 }
 
-int test2()
+int qdoor_test2()
 {
 	struct ipceng *eng1 = ipceng_init("eng1");
 	struct ipceng *eng2 = ipceng_init("eng2");
@@ -67,9 +68,47 @@ int test2()
 	return 0;
 }
 
+int shm_test1()
+{
+	struct ipceng *eng1 = ipceng_init("eng1");
+	struct ipceng *eng2 = ipceng_init("eng2");
+	int shm_size = 100;
+	
+	if (ipceng_shm_add(eng1, "loloshm",shm_size) != 0) {
+		printf("eng1 error: %s\n", ipceng_errmsg(eng1));
+		return 0;
+	}
+	if (ipceng_shm_add(eng2, "loloshm", shm_size) != 0) {
+		printf("eng2 error: %s\n", ipceng_errmsg(eng2));
+		return 0;
+	}
+
+	int i, try_count = 10;
+	char *data, *buff;
+	size_t addr, size;
+	for (i = 0; i < try_count; i++) {
+		data = "hello world!";
+		addr = 0;
+		size = strlen(data);
+		if (ipceng_shm_write(eng1, "loloshm", data, addr, size) != 0) {
+			printf("eng1 error: %s\n", ipceng_errmsg(eng1));
+			continue;
+		}
+		if (ipceng_shm_read(eng2, "loloshm", &buff, addr, size) != 0) {
+			printf("eng2 error: %s\n", ipceng_errmsg(eng2));
+			continue;
+		}
+		printf("eng2 reading shared memory at address %ld: %s\n", addr, buff);
+		free(buff);
+	}
+
+	return 0;
+}
+
 int main(int argc, char const *argv[])
 {
-	// test1();
-	test2();	
+	// qdoor_test1();
+	// qdoor_test2();
+	shm_test1();
 	return 0;
 }
