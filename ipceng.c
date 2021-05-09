@@ -63,6 +63,7 @@ struct qdoor
 struct shm
 {
 	char *name;
+	char *nickname;
 	int shmd;
 	int oflag;
 	mode_t mode;
@@ -450,23 +451,25 @@ int ipceng_shm_add(struct ipceng *eng, char *shm_name, size_t size)
 	// shm should not be added before
 	struct shm *iter;
 	list_for_each_entry(iter, &eng->shm_list, _list) {
-		if (!strcmp(iter->name, shm_name)) {
+		if (!strcmp(iter->nickname, shm_name)) {
 			ipceng_set_error(eng, IPCENG_ERR_SHMADD, \
 				"failed to add shm: shm has been added already");
 			return -1;
 		}
 	}
 
-	int shmname_len = strlen("/_.shm") + strlen(eng->name) + strlen(shm_name) + 1;
 	// creating shm object
 	struct shm *new_shm = (struct shm *)malloc(sizeof(struct shm));
+	int shmname_len = strlen("/.shm") + strlen(shm_name) + 1;
 	new_shm->name = (char *)malloc(shmname_len);
-	sprintf(new_shm->name, "/%s_%s.shm", eng->name, shm_name);
+	sprintf(new_shm->name, "/%s.shm", shm_name);
+	new_shm->nickname = strdup(shm_name);
 	// opening shm and setting its size with ftruncate
 	new_shm->oflag = O_CREAT | O_RDWR;
 	new_shm->mode = 0664;
 	new_shm->shmd = shm_open(new_shm->name, new_shm->oflag, new_shm->mode);
 	if (new_shm->shmd == -1) {
+		free_safe(new_shm->nickname);
 		free_safe(new_shm->name);
 		free_safe(new_shm);
 		ipceng_set_error(eng, IPCENG_ERR_SHMADD, "failed to add shm: shm_open error");
@@ -475,6 +478,7 @@ int ipceng_shm_add(struct ipceng *eng, char *shm_name, size_t size)
 	new_shm->size = size;
 	if (ftruncate(new_shm->shmd, new_shm->size) != 0) {
 		close(new_shm->shmd);
+		free_safe(new_shm->nickname);
 		free_safe(new_shm->name);
 		free_safe(new_shm);
 		ipceng_set_error(eng, IPCENG_ERR_SHMADD, "failed to add shm: ftruncate error");
@@ -485,6 +489,7 @@ int ipceng_shm_add(struct ipceng *eng, char *shm_name, size_t size)
 		MAP_SHARED, new_shm->shmd, 0);
 	if (new_shm->ptr == MAP_FAILED) {
 		close(new_shm->shmd);
+		free_safe(new_shm->nickname);
 		free_safe(new_shm->name);
 		free_safe(new_shm);
 		ipceng_set_error(eng, IPCENG_ERR_SHMADD, "failed to add shm: mmap error");
@@ -503,10 +508,11 @@ int ipceng_shm_del(struct ipceng *eng, char *shm_name)
 {
 	struct shm *iter, *iter_n;
 	list_for_each_entry_safe(iter, iter_n, &eng->shm_list, _list) {
-		if (!strcmp(iter->name, shm_name)) {
+		if (!strcmp(iter->nickname, shm_name)) {
 			munmap(iter->ptr, iter->size);
 			close(iter->shmd);
 			list_del(&iter->_list);
+			free_safe(iter->nickname);
 			free_safe(iter->name);
 			free_safe(iter);
 			eng->shm_count--;
@@ -522,7 +528,7 @@ int ipceng_shm_open(struct ipceng *eng, char *shm_name)
 {
 	struct shm *iter;
 	list_for_each_entry(iter, &eng->shm_list, _list) {
-		if (!strcmp(iter->name, shm_name)) {
+		if (!strcmp(iter->nickname, shm_name)) {
 			if (iter->state != IPC_STATE_OPENED) {
 				iter->shmd = shm_open(iter->name, iter->oflag, iter->mode);
 				if (iter->shmd == -1) {
@@ -559,7 +565,7 @@ int ipceng_shm_close(struct ipceng *eng, char *shm_name)
 {
 	struct shm *iter;
 	list_for_each_entry(iter, &eng->shm_list, _list) {
-		if (!strcmp(iter->name, shm_name)) {
+		if (!strcmp(iter->nickname, shm_name)) {
 			if (iter->state != IPC_STATE_CLOSED) {
 				close(iter->shmd);
 				munmap(iter->ptr, iter->size);
@@ -577,7 +583,7 @@ int ipceng_shm_read(struct ipceng *eng, char *shm_name, char **buff, size_t addr
 {
 	struct shm *iter;
 	list_for_each_entry(iter, &eng->shm_list, _list) {
-		if (!strcmp(iter->name, shm_name)) {
+		if (!strcmp(iter->nickname, shm_name)) {
 			if (iter->state != IPC_STATE_OPENED) {
 				ipceng_set_error(eng, IPCENG_ERR_SHMREAD, \
 					"failed to read from shm: shm is not opened");
@@ -605,7 +611,7 @@ int ipceng_shm_write(struct ipceng *eng, char *shm_name, char *data, size_t addr
 {
 	struct shm *iter;
 	list_for_each_entry(iter, &eng->shm_list, _list) {
-		if (!strcmp(iter->name, shm_name)) {
+		if (!strcmp(iter->nickname, shm_name)) {
 			if (iter->state != IPC_STATE_OPENED) {
 				ipceng_set_error(eng, IPCENG_ERR_SHMWRITE, \
 					"failed to read from shm: shm is not opened");
